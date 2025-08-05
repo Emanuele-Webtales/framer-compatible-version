@@ -1,6 +1,6 @@
 import { useAspect, useTexture } from '@react-three/drei';
 import { useFrame, Canvas, useThree } from '@react-three/fiber';
-import { Mesh, ShaderMaterial, SRGBColorSpace, Vector2, Vector3 } from 'three';
+import { Mesh, ShaderMaterial, MeshBasicMaterial, SRGBColorSpace, Vector2, Vector3, AdditiveBlending } from 'three';
 
 export {
     useAspect,
@@ -12,5 +12,7 @@ export {
     ShaderMaterial,
     SRGBColorSpace,
     Vector2,
-    Vector3
+    Vector3,
+    MeshBasicMaterial,
+    AdditiveBlending
 }

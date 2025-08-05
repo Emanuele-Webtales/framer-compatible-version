@@ -7,11 +7,13 @@ import {
   useThree,
   Mesh,
   ShaderMaterial,
+  MeshBasicMaterial,
   SRGBColorSpace,
   Vector2,
   Vector3,
-} //@ts-ignore the errors are to be expected
-from "https://cdn.jsdelivr.net/gh/framer-university/components/npm-bundles/scan-test-bundle.js"
+  AdditiveBlending,
+} //@ts-ignore the errors are to be
+from "https://cdn.jsdelivr.net/gh/framer-university/components/npm-bundles/3D-scan-bundle.js"
 
 //--------------------------------
 //--------------------------------
@@ -330,174 +332,131 @@ const Scene = ({
     } : { r: 1, g: 0, b: 0 };
   };
 
-  // Create a custom shader material that uses the textures
+  // Use MeshBasicMaterial for bright base image
   const material = useMemo(() => {
-    const vertexShader = `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `;
-
-    const fragmentShader = `
-      uniform float uProgress;
-      uniform vec2 uPointer;
-      uniform float uTime;
-      uniform sampler2D uTextureMap;
-      uniform sampler2D uDepthMap;
-      uniform float uDotSize;
-      uniform vec3 uDotColor;
-      uniform float uTilingScale;
-      uniform float uEffectType;
-      uniform float uGradientWidth;
-      uniform float uGradientIntensity;
-      varying vec2 vUv;
-      
-      // Simulate noise function
-      float noise(vec2 p) {
-        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-      }
-      
-      // Simulate cell noise
-      float cellNoise(vec2 p) {
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        float n = noise(i);
-        return n;
-      }
-      
-      // Simple gaussian blur
-      vec3 blur(sampler2D tex, vec2 uv, vec2 direction, float strength) {
-        vec3 color = vec3(0.0);
-        float total = 0.0;
-        
-        for(float i = -4.0; i <= 4.0; i++) {
-          float weight = exp(-0.5 * (i * i) / (strength * strength));
-          vec2 offset = direction * i * 0.01;
-          color += texture2D(tex, uv + offset).rgb * weight;
-          total += weight;
-        }
-        
-        return color / total;
-      }
-      
-      void main() {
-        vec2 uv = vUv;
-        
-        // Sample the depth map
-        float depth = texture2D(uDepthMap, uv).r;
-        
-        // Sample the texture (no displacement)
-        vec3 textureColor = texture2D(uTextureMap, uv).rgb;
-        
-        // Create flow effect based on progress and depth (SCANNING EFFECT)
-        float flow = 1.0 - smoothstep(0.0, 0.02, abs(depth - uProgress));
-        
-        vec3 mask = vec3(0.0);
-        
-        if (uEffectType == 0.0) { // Dots effect
-          // Create tiling effect with adjustable scale
-          vec2 tiledUv = mod(uv * uTilingScale, 2.0) - 1.0;
-          float dist = length(tiledUv);
-          
-          // Create dot pattern with adjustable size
-          float brightness = cellNoise(uv * 60.0);
-          float dot = smoothstep(uDotSize, uDotSize - 0.01, dist) * brightness;
-          
-          // Create mask with custom color
-          mask = dot * flow * uDotColor * 10.0;
-        } else { // Gradient effect
-          // Gradient line mode - central band at full opacity, linear falloff
-          float exactProgress = abs(depth - uProgress);
-          
-          // Scale the gradient width to be less sensitive
-          float scaledGradientWidth = uGradientWidth * 0.1;
-          
-          // Check if we're at the current progress band
-          bool isCurrentBand = exactProgress <= 0.001;
-          
-          // Check if we're within the gradient width range
-          bool isWithinGradientRange = exactProgress <= scaledGradientWidth;
-          
-          // Calculate linear interpolation for bands within range
-          float normalizedDistance = exactProgress / scaledGradientWidth;
-          float interpolatedOpacity = (1.0 - normalizedDistance) * 0.95 + 0.05;
-          
-          // Set opacity: 1.0 for current band, interpolated for bands within range, 0.0 for others
-          float opacity = isCurrentBand ? 1.0 : (isWithinGradientRange ? interpolatedOpacity : 0.0);
-          
-          // Apply color and intensity
-          mask = opacity * uDotColor * uGradientIntensity;
-        }
-        
-        // PURE ADDITIVE BLENDING - Only add the effect, don't affect base image
-        // This ensures the base image stays exactly as bright as it should be
-        vec3 finalColor = textureColor + mask;
-        
-        gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
-
-    const rgbColor = hexToRgb(dotColor);
-
-    return new ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        uProgress: { value: progress },
-        uPointer: { value: new Vector2(0.5, 0.5) },
-        uTime: { value: 0.0 },
-        uTextureMap: { value: rawMap },
-        uDepthMap: { value: depthMapTexture },
-        uDotSize: { value: dotSize },
-        uDotColor: { value: new Vector3(rgbColor.r, rgbColor.g, rgbColor.b) },
-        uTilingScale: { value: tilingScale },
-        uEffectType: { value: effectType === 'dots' ? 0.0 : 1.0 },
-        uGradientWidth: { value: gradientWidth },
-        uGradientIntensity: { value: gradientIntensity }
-      },
+    return new MeshBasicMaterial({
+      map: rawMap,
+      transparent: false,
     });
-  }, [rawMap, depthMapTexture, setIsLoading, dotSize, dotColor, tilingScale, effectType, gradientWidth, gradientIntensity, progress]); // Add progress to dependencies
+  }, [rawMap]);
+  
+  // Create uniform refs that persist between renders
+  const uniformsRef = useRef({
+    uProgress: { value: 0 },
+    uDepthMap: { value: null as any },
+    uColor: { value: new Vector3(0, 1, 0) },
+    uEffectType: { value: 0.0 },
+    uDotSize: { value: dotSize },
+    uTilingScale: { value: tilingScale },
+    uGradientWidth: { value: gradientWidth },
+    uGradientIntensity: { value: gradientIntensity }
+  });
 
   const [w, h] = useAspect(WIDTH, HEIGHT);
 
-  // Animate the progress uniform
-  useFrame(({ pointer, clock }) => {
-    if (materialRef.current?.material instanceof ShaderMaterial) {
-      materialRef.current.material.uniforms.uTime.value = clock.getElapsedTime();
-      materialRef.current.material.uniforms.uPointer.value = pointer;
-    }
-  });
-
-  // Update uniforms when props change (without recreating material)
+  // Update uniforms for the effects shader
   useFrame(() => {
-    if (materialRef.current?.material instanceof ShaderMaterial) {
-      const material = materialRef.current.material as ShaderMaterial;
-      const rgbColor = hexToRgb(dotColor);
-      
-      material.uniforms.uDotSize.value = dotSize;
-      material.uniforms.uDotColor.value = new Vector3(rgbColor.r, rgbColor.g, rgbColor.b);
-      material.uniforms.uTilingScale.value = tilingScale;
-      material.uniforms.uEffectType.value = effectType === 'dots' ? 0.0 : 1.0;
-      material.uniforms.uGradientWidth.value = gradientWidth;
-      material.uniforms.uGradientIntensity.value = gradientIntensity;
-      material.uniforms.uProgress.value = progress; // Update progress uniform
-      
-      // Update textures when they're loaded
-      if (rawMap && material.uniforms.uTextureMap.value !== rawMap) {
-        material.uniforms.uTextureMap.value = rawMap;
-      }
-      if (depthMapTexture && material.uniforms.uDepthMap.value !== depthMapTexture) {
-        material.uniforms.uDepthMap.value = depthMapTexture;
-      }
+    const rgbColor = hexToRgb(dotColor);
+    
+    // Update persistent uniform refs
+    uniformsRef.current.uProgress.value = progress;
+    uniformsRef.current.uColor.value.set(rgbColor.r, rgbColor.g, rgbColor.b);
+    uniformsRef.current.uEffectType.value = effectType === 'dots' ? 0.0 : 1.0;
+    uniformsRef.current.uDotSize.value = dotSize;
+    uniformsRef.current.uTilingScale.value = tilingScale;
+    uniformsRef.current.uGradientWidth.value = gradientWidth;
+    uniformsRef.current.uGradientIntensity.value = gradientIntensity;
+    
+    // Update depth map when loaded
+    if (depthMapTexture && uniformsRef.current.uDepthMap.value !== depthMapTexture) {
+      uniformsRef.current.uDepthMap.value = depthMapTexture;
     }
   });
 
   return (
-    <mesh scale={[w, h, 1]} material={material} ref={materialRef}>
-      <planeGeometry />
-    </mesh>
+    <>
+      {/* Base image mesh - bright and untouched */}
+      <mesh scale={[w, h, 1]} material={material}>
+        <planeGeometry />
+      </mesh>
+      
+      {/* Effects overlay mesh */}
+      <mesh scale={[w, h, 1]} position={[0, 0, 0.01]} ref={materialRef}>
+        <planeGeometry />
+        <shaderMaterial
+          transparent={true}
+          blending={AdditiveBlending}
+          vertexShader={`
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `}
+          fragmentShader={`
+            uniform float uProgress;
+            uniform sampler2D uDepthMap;
+            uniform vec3 uColor;
+            uniform float uEffectType;
+            uniform float uDotSize;
+            uniform float uTilingScale;
+            uniform float uGradientWidth;
+            uniform float uGradientIntensity;
+            varying vec2 vUv;
+            
+            // Noise functions removed for clean gradient lines
+            
+            void main() {
+              vec2 uv = vUv;
+              float depth = texture2D(uDepthMap, uv).r;
+              
+              // Use the exact working formula from reference-code.tsx
+              float flow = 1.0 - smoothstep(0.0, 0.02, abs(depth - uProgress));
+              
+              // For dots effect
+              if (uEffectType < 0.5) {
+                // Create tiled UV for dots
+                vec2 aspect = vec2(1600.0 / 900.0, 1.0);
+                vec2 tUv = vec2(uv.x * aspect.x, uv.y);
+                vec2 tiling = vec2(uTilingScale);
+                vec2 tiledUv = mod(tUv * tiling, 2.0) - 1.0;
+                
+                // Create dots (without noise for clean appearance)
+                float dist = length(tiledUv);
+                float dot = smoothstep(0.5, 0.49, dist);
+                
+                // Combine dots with flow
+                float final = dot * flow;
+                gl_FragColor = vec4(uColor * final, final);
+              } else {
+                // For gradient line effect - high quality like reference-code-old.tsx
+                float exactProgress = abs(depth - uProgress);
+                
+                // Scale the gradient width to be less sensitive (like reference code)
+                float scaledGradientWidth = uGradientWidth * 0.1;
+                
+                // Check if we're at the current progress band (very precise)
+                bool isCurrentBand = exactProgress <= 0.001;
+                
+                // Check if we're within the gradient width range
+                bool isWithinGradientRange = exactProgress <= scaledGradientWidth;
+                
+                // Calculate linear interpolation for bands within range
+                float normalizedDistance = exactProgress / scaledGradientWidth;
+                float interpolatedOpacity = (1.0 - normalizedDistance) * 0.95 + 0.05;
+                
+                // Set opacity: 1.0 for current band, interpolated for bands within range, 0.0 for others
+                float opacity = isCurrentBand ? 1.0 : (isWithinGradientRange ? interpolatedOpacity : 0.0);
+                
+                // Apply color and intensity
+                gl_FragColor = vec4(uColor * opacity * uGradientIntensity, opacity);
+              }
+            }
+          `}
+          uniforms={uniformsRef.current}
+        />
+      </mesh>
+    </>
   );
 };
 
@@ -568,7 +527,7 @@ const Html = ({ textureMap, depthMap }: { textureMap?: any; depthMap?: any }) =>
         }}
       />
       
-      {isLoading && (
+      {/* {isLoading && (
         <div
           style={{
             height: '100vh',
@@ -595,58 +554,8 @@ const Html = ({ textureMap, depthMap }: { textureMap?: any; depthMap?: any }) =>
             }}
           ></div>
         </div>
-      )}
-      <div style={{ height: '100vh' }}>
-        <div
-          style={{
-            height: '100vh',
-            textTransform: 'uppercase',
-            alignItems: 'center',
-            width: '100%',
-            position: 'absolute',
-            zIndex: 60,
-            pointerEvents: 'none',
-            padding: '0 2.5rem',
-            display: 'flex',
-            justifyContent: 'center',
-            flexDirection: 'column',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '2.25rem',
-              lineHeight: '2.5rem',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                gap: '0.5rem',
-                overflow: 'hidden',
-              }}
-            >
-              {'Crown of Fire'.split(' ').map((word, index) => {
-                return (
-                  <div data-title key={index}>
-                    {word}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div
-            style={{
-              fontSize: '0.75rem',
-              lineHeight: '1rem',
-              marginTop: '0.5rem',
-              overflow: 'hidden',
-            }}
-          >
-            <div data-desc>The Majesty and Glory of the Young King</div>
-          </div>
-        </div>
-
+      )} */}
+      <div style={{ height: '100%', width:"100%", padding:"10%" }}>
         <WebGPUCanvas>
           <PostProcessing></PostProcessing>
           <Scene 

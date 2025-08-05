@@ -390,17 +390,7 @@ const Scene = ({
       uniform float uGradientIntensity;
       varying vec2 vUv;
       
-      float noise(vec2 p) {
-        return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-      }
-      
-            // Simulate cell noise (from framer-version)
-      float cellNoise(vec2 p) {
-        vec2 i = floor(p);
-        vec2 f = fract(p);
-        float n = noise(i);
-        return n;
-      }
+                  // Noise functions removed for clean gradient lines
       
                   void main() {
               vec2 uv = vUv;
@@ -417,21 +407,35 @@ const Scene = ({
                 vec2 tiling = vec2(uTilingScale);
                 vec2 tiledUv = mod(tUv * tiling, 2.0) - 1.0;
                 
-                // Create noise for dot brightness
-                float noise = fract(sin(dot(tUv * tiling / 2.0, vec2(12.9898, 78.233))) * 43758.5453);
-                
-                // Create dots
+                // Create dots (without noise for clean appearance)
                 float dist = length(tiledUv);
-                float dot = smoothstep(0.5, 0.49, dist) * noise;
+                float dot = smoothstep(0.5, 0.49, dist);
                 
                 // Combine dots with flow
                 float final = dot * flow;
                 gl_FragColor = vec4(uColor * final, final);
-              } else {
-                // For gradient line effect
-                float gradient = smoothstep(uProgress - uGradientWidth, uProgress, depth) * 
-                               smoothstep(uProgress + uGradientWidth, uProgress, depth);
-                gl_FragColor = vec4(uColor * gradient * uGradientIntensity, gradient);
+                                           } else {
+                // For gradient line effect - high quality like reference-code-old.tsx
+                float exactProgress = abs(depth - uProgress);
+                
+                // Scale the gradient width to be less sensitive (like reference code)
+                float scaledGradientWidth = uGradientWidth * 0.1;
+                
+                // Check if we're at the current progress band (very precise)
+                bool isCurrentBand = exactProgress <= 0.001;
+                
+                // Check if we're within the gradient width range
+                bool isWithinGradientRange = exactProgress <= scaledGradientWidth;
+                
+                // Calculate linear interpolation for bands within range
+                float normalizedDistance = exactProgress / scaledGradientWidth;
+                float interpolatedOpacity = (1.0 - normalizedDistance) * 0.95 + 0.05;
+                
+                // Set opacity: 1.0 for current band, interpolated for bands within range, 0.0 for others
+                float opacity = isCurrentBand ? 1.0 : (isWithinGradientRange ? interpolatedOpacity : 0.0);
+                
+                // Apply color and intensity
+                gl_FragColor = vec4(uColor * opacity * uGradientIntensity, opacity);
               }
             }
           `}
@@ -464,8 +468,8 @@ const Html = () => {
         await loopAnimation.start({
           x: [0, 1],
           transition: {
-            duration: 3,
-            ease: 'easeInOut',
+            duration: 10,
+            ease: 'easeOut',
             repeat: Infinity,
             repeatType: 'loop',
           }
@@ -497,7 +501,7 @@ const Html = () => {
   }, [isLoading]);
 
   return (
-    <div>
+    <div style={{height: '100vh', width:"100vw", padding:"0%"}}>
       {/* Hidden motion div to track loop animation progress */}
       <motion.div
         style={{ display: 'none' }}
@@ -537,10 +541,10 @@ const Html = () => {
           ></div>
         </div>
       )}
-      <div style={{ height: '100vh' }}>
+      <div style={{ height: '100%' }}>
         <div
           style={{
-            height: '100vh',
+            height: '100%',
             textTransform: 'uppercase',
             alignItems: 'center',
             width: '100%',
@@ -553,39 +557,6 @@ const Html = () => {
             flexDirection: 'column',
           }}
         >
-          <div
-            style={{
-              fontSize: '2.25rem',
-              lineHeight: '2.5rem',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                gap: '0.5rem',
-                overflow: 'hidden',
-              }}
-            >
-              {'Crown of Fire'.split(' ').map((word, index) => {
-                return (
-                  <div data-title key={index}>
-                    {word}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div
-            style={{
-              fontSize: '0.75rem',
-              lineHeight: '1rem',
-              marginTop: '0.5rem',
-              overflow: 'hidden',
-            }}
-          >
-            <div data-desc>The Majesty and Glory of the Young King</div>
-          </div>
         </div>
 
         <WebGPUCanvas>
