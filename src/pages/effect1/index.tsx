@@ -4,20 +4,16 @@ import { WebGPUCanvas } from '@/components/canvas';
 import { useAspect, useTexture } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { useContext, useMemo, useRef } from 'react';
-import { Tomorrow } from 'next/font/google';
+
 import gsap from 'gsap';
 
 import * as THREE from 'three';
 import { useGSAP } from '@gsap/react';
 import { GlobalContext, ContextProvider } from '@/context';
 import { PostProcessing } from '@/components/post-processing';
-import TEXTUREMAP from '../../../public/assets/raw-1.png';
-import DEPTHMAP from '../../../public/assets/depth-1.png';
+import TEXTUREMAP from "../assets/raw-1.png";
+import DEPTHMAP from "../assets/depth-1.png"
 
-const tomorrow = Tomorrow({
-  weight: '600',
-  subsets: ['latin'],
-});
 
 const WIDTH = 1600;
 const HEIGHT = 900;
@@ -252,7 +248,6 @@ const Html = () => {
             style={{
               fontSize: '2.25rem',
               lineHeight: '2.5rem',
-              ...tomorrow.style,
             }}
           >
             <div
