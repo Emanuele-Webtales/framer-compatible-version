@@ -1,26 +1,116 @@
 'use client';
 
-import { WebGPUCanvas } from '@/components/canvas';
-import { useAspect, useTexture } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
-import { useContext, useMemo, useRef, useState } from 'react';
-import { Tomorrow } from 'next/font/google';
-import gsap from 'gsap';
+//--------------------------------
+// LIBRARIES WE NEED TO BUNDLE
+//--------------------------------
 
+import { useAspect, useTexture } from '@react-three/drei';
+import { useFrame, Canvas, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGSAP } from '@gsap/react';
-import { GlobalContext, ContextProvider } from '@/context';
-import { PostProcessing } from '@/components/post-processing';
+import { Mesh, ShaderMaterial, MeshBasicMaterial, SRGBColorSpace, Vector2, Vector3 } from 'three';
+
+// Import basic TSL functions (only the ones we need)
+import {
+  abs,
+  float,
+  max,
+  mod,
+  oneMinus,
+  select,
+  smoothstep,
+  sub,
+  texture,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+} from 'three/tsl';
+
+//--------------------------------
+//--------------------------------
+
+
+import { useContext, useMemo, useRef, useState, useEffect, createContext, ReactNode } from 'react';
+import { motion, useAnimation, useMotionValue } from 'framer-motion';
 import TEXTUREMAP from '../assets/raw-1.png';
 import DEPTHMAP from '../assets/depth-1.png';
 
-const tomorrow = Tomorrow({
-  weight: '600',
-  subsets: ['latin'],
-});
-
 const WIDTH = 1600;
 const HEIGHT = 900;
+
+// Global Context
+interface GlobalContextType {
+  isLoading: boolean;
+  setIsLoading: (loading: boolean) => void;
+}
+
+export const GlobalContext = createContext<GlobalContextType>({
+  isLoading: true,
+  setIsLoading: () => {},
+});
+
+interface ContextProviderProps {
+  children: ReactNode;
+}
+
+export const ContextProvider: React.FC<ContextProviderProps> = ({ children }) => {
+  const [isLoading, setIsLoading] = useState(true);
+
+  return (
+    <GlobalContext.Provider value={{ isLoading, setIsLoading }}>
+      {children}
+    </GlobalContext.Provider>
+  );
+};
+
+// WebGPUCanvas Component
+export const WebGPUCanvas = (props:any) => {
+  return (
+    <Canvas
+      {...props}
+      flat
+      gl={{
+        antialias: true,
+        powerPreference: "high-performance",
+        precision: "mediump",
+        depth: true,
+      }}
+      style={{
+        width: "100%",
+        height: "100%",
+      }}
+      resize={{ offsetSize: true }}
+      dpr={[1, 2]}
+    >
+      {props.children}
+    </Canvas>
+  );
+};
+
+// PostProcessing Component
+export const PostProcessing = ({
+  strength = 1,
+  threshold = 1,
+}: {
+  strength?: number;
+  threshold?: number;
+}) => {
+  const { gl, scene, camera } = useThree();
+
+  // Simple post-processing setup that works with current Three.js version
+  const render = useMemo(() => {
+    // For now, just return the standard renderer
+    return { gl, scene, camera };
+  }, [gl, scene, camera]);
+
+  useFrame(() => {
+    // Use standard rendering instead of renderAsync
+    gl.setRenderTarget(null);
+    gl.render(scene, camera);
+  });
+
+  return null;
+};
 
 // UI Controls Component
 interface UIControlsProps {
@@ -28,12 +118,16 @@ interface UIControlsProps {
   setDotSize: (value: number) => void;
   dotColor: string;
   setDotColor: (value: string) => void;
-  bloomIntensity: number;
-  setBloomIntensity: (value: number) => void;
   tilingScale: number;
   setTilingScale: (value: number) => void;
   isVisible: boolean;
   setIsVisible: (value: boolean) => void;
+  effectType: 'dots' | 'gradient';
+  setEffectType: (value: 'dots' | 'gradient') => void;
+  gradientWidth: number;
+  setGradientWidth: (value: number) => void;
+  gradientIntensity: number;
+  setGradientIntensity: (value: number) => void;
 }
 
 const UIControls = ({ 
@@ -41,12 +135,16 @@ const UIControls = ({
   setDotSize, 
   dotColor, 
   setDotColor, 
-  bloomIntensity, 
-  setBloomIntensity,
   tilingScale,
   setTilingScale,
   isVisible,
-  setIsVisible 
+  setIsVisible,
+  effectType,
+  setEffectType,
+  gradientWidth,
+  setGradientWidth,
+  gradientIntensity,
+  setGradientIntensity
 }: UIControlsProps) => {
   if (!isVisible) return null;
 
@@ -54,30 +152,100 @@ const UIControls = ({
     <div style={{
       position: 'fixed',
       top: '20px',
-      right: '20px',
-      background: 'rgba(0, 0, 0, 0.8)',
+      left: '20px',
+      background: 'rgba(0, 0, 0, 0.6)',
       padding: '20px',
-      borderRadius: '10px',
+      borderRadius: '24px',
       color: 'white',
       fontFamily: 'monospace',
-      fontSize: '14px',
+      textTransform: 'uppercase',
+      fontSize: '13px',
+      backdropFilter: 'blur(10px)',
       zIndex: 1000,
+      border: '1px solid rgba(255, 255, 255, 0.1)',
       minWidth: '250px',
     }}>
       <h3 style={{ margin: '0 0 15px 0', fontSize: '16px' }}>Shader Controls</h3>
       
       <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Dot Size: {dotSize.toFixed(2)}</label>
-        <input
-          type="range"
-          min="0.1"
-          max="2.0"
-          step="0.1"
-          value={dotSize}
-          onChange={(e) => setDotSize(parseFloat(e.target.value))}
-          style={{ width: '100%' }}
-        />
+        <label style={{ display: 'block', marginBottom: '5px' }}>Effect Type:</label>
+        <select
+          value={effectType}
+          onChange={(e) => setEffectType(e.target.value as 'dots' | 'gradient')}
+          style={{
+            width: '100%',
+            padding: '8px',
+            borderRadius: '4px',
+            border: 'none',
+            backgroundColor: 'rgba(255, 255, 255, 0.1)',
+            color: 'white',
+            fontSize: '14px'
+          }}
+        >
+          <option value="dots">Dots</option>
+          <option value="gradient">Gradient Line</option>
+        </select>
       </div>
+
+      {effectType === 'dots' && (
+        <>
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Dot Size: {dotSize.toFixed(2)}</label>
+            <input
+              type="range"
+              min="0.1"
+              max="2.0"
+              step="0.1"
+              value={dotSize}
+              onChange={(e) => setDotSize(parseFloat(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Tiling Scale: {tilingScale.toFixed(0)}</label>
+            <input
+              type="range"
+              min="10"
+              max="200"
+              step="10"
+              value={tilingScale}
+              onChange={(e) => setTilingScale(parseInt(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </>
+      )}
+
+      {effectType === 'gradient' && (
+        <>
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Gradient Width: {gradientWidth.toFixed(2)}</label>
+            <input
+              type="range"
+              min="0.0"
+              max="5.0"
+              step="0.1"
+              value={gradientWidth}
+              onChange={(e) => setGradientWidth(parseFloat(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Gradient Intensity: {gradientIntensity.toFixed(2)}</label>
+            <input
+              type="range"
+              min="0.0"
+              max="5.0"
+              step="0.1"
+              value={gradientIntensity}
+              onChange={(e) => setGradientIntensity(parseFloat(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </>
+      )}
 
       <div style={{ marginBottom: '15px' }}>
         <label style={{ display: 'block', marginBottom: '5px' }}>Dot Color:</label>
@@ -86,32 +254,6 @@ const UIControls = ({
           value={dotColor}
           onChange={(e) => setDotColor(e.target.value)}
           style={{ width: '100%', height: '30px' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Bloom Intensity: {bloomIntensity.toFixed(2)}</label>
-        <input
-          type="range"
-          min="0.0"
-          max="2.0"
-          step="0.1"
-          value={bloomIntensity}
-          onChange={(e) => setBloomIntensity(parseFloat(e.target.value))}
-          style={{ width: '100%' }}
-        />
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <label style={{ display: 'block', marginBottom: '5px' }}>Tiling Scale: {tilingScale.toFixed(0)}</label>
-        <input
-          type="range"
-          min="10"
-          max="200"
-          step="10"
-          value={tilingScale}
-          onChange={(e) => setTilingScale(parseInt(e.target.value))}
-          style={{ width: '100%' }}
         />
       </div>
 
@@ -136,24 +278,42 @@ const UIControls = ({
 interface SceneProps {
   dotSize: number;
   dotColor: string;
-  bloomIntensity: number;
   tilingScale: number;
+  effectType: 'dots' | 'gradient';
+  gradientWidth: number;
+  gradientIntensity: number;
+  progress: number;
 }
 
 const Scene = ({ 
   dotSize, 
   dotColor, 
-  bloomIntensity, 
-  tilingScale 
+  tilingScale,
+  effectType,
+  gradientWidth,
+  gradientIntensity,
+  progress
 }: SceneProps) => {
   const { setIsLoading } = useContext(GlobalContext);
-  const materialRef = useRef<THREE.Mesh>(null);
+  const materialRef = useRef<Mesh>(null);
+  
+  // Create uniform refs that persist between renders
+  const uniformsRef = useRef({
+    uProgress: { value: 0 },
+    uDepthMap: { value: null as any },
+    uColor: { value: new Vector3(0, 1, 0) },
+    uEffectType: { value: 0.0 },
+    uDotSize: { value: dotSize },
+    uTilingScale: { value: tilingScale },
+    uGradientWidth: { value: gradientWidth },
+    uGradientIntensity: { value: gradientIntensity }
+  });
 
   // Load the textures
   const [rawMap, depthMap] = useTexture([TEXTUREMAP.src, DEPTHMAP.src], () => {
     setIsLoading(false);
     if (rawMap) {
-      rawMap.colorSpace = THREE.SRGBColorSpace;
+      rawMap.colorSpace = SRGBColorSpace;
     }
   });
 
@@ -167,34 +327,74 @@ const Scene = ({
     } : { r: 1, g: 0, b: 0 };
   };
 
-  // Create a custom shader material that uses the textures
+  // Use MeshBasicMaterial for bright base image
   const material = useMemo(() => {
-    const vertexShader = `
+    return new MeshBasicMaterial({
+      map: rawMap,
+      transparent: false,
+    });
+  }, [rawMap]);
+
+  const [w, h] = useAspect(WIDTH, HEIGHT);
+
+  // Update uniforms for the effects shader
+  useFrame(() => {
+    const rgbColor = hexToRgb(dotColor);
+    
+    // Update persistent uniform refs
+    uniformsRef.current.uProgress.value = progress;
+    uniformsRef.current.uColor.value.set(rgbColor.r, rgbColor.g, rgbColor.b);
+    uniformsRef.current.uEffectType.value = effectType === 'dots' ? 0.0 : 1.0;
+    uniformsRef.current.uDotSize.value = dotSize;
+    uniformsRef.current.uTilingScale.value = tilingScale;
+    uniformsRef.current.uGradientWidth.value = gradientWidth;
+    uniformsRef.current.uGradientIntensity.value = gradientIntensity;
+    
+    // Update depth map when loaded
+    if (depthMap && uniformsRef.current.uDepthMap.value !== depthMap) {
+      uniformsRef.current.uDepthMap.value = depthMap;
+    }
+    
+    // Debug: Log progress to make sure it's updating
+    console.log('Updating progress:', progress);
+  });
+
+  return (
+    <>
+      {/* Base image mesh - bright and untouched */}
+      <mesh scale={[w, h, 1]} material={material}>
+        <planeGeometry />
+      </mesh>
+      
+      {/* Effects overlay mesh */}
+      <mesh scale={[w, h, 1]} position={[0, 0, 0.01]} ref={materialRef}>
+        <planeGeometry />
+        <shaderMaterial
+          transparent={true}
+          blending={THREE.AdditiveBlending}
+          vertexShader={`
       varying vec2 vUv;
       void main() {
         vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
-    `;
-
-    const fragmentShader = `
+          `}
+          fragmentShader={`
       uniform float uProgress;
-      uniform vec2 uPointer;
-      uniform float uTime;
-      uniform sampler2D uTextureMap;
       uniform sampler2D uDepthMap;
+            uniform vec3 uColor;
+            uniform float uEffectType;
       uniform float uDotSize;
-      uniform vec3 uDotColor;
-      uniform float uBloomIntensity;
       uniform float uTilingScale;
+      uniform float uGradientWidth;
+      uniform float uGradientIntensity;
       varying vec2 vUv;
       
-      // Simulate noise function
       float noise(vec2 p) {
         return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
       }
       
-      // Simulate cell noise
+            // Simulate cell noise (from framer-version)
       float cellNoise(vec2 p) {
         vec2 i = floor(p);
         vec2 f = fract(p);
@@ -202,182 +402,141 @@ const Scene = ({
         return n;
       }
       
-      // Simple gaussian blur
-      vec3 blur(sampler2D tex, vec2 uv, vec2 direction, float strength) {
-        vec3 color = vec3(0.0);
-        float total = 0.0;
-        
-        for(float i = -4.0; i <= 4.0; i++) {
-          float weight = exp(-0.5 * (i * i) / (strength * strength));
-          vec2 offset = direction * i * 0.01;
-          color += texture2D(tex, uv + offset).rgb * weight;
-          total += weight;
-        }
-        
-        return color / total;
-      }
-      
-      void main() {
-        vec2 uv = vUv;
-        
-        // Sample the depth map
-        float depth = texture2D(uDepthMap, uv).r;
-        
-        // Sample the texture (no displacement)
-        vec3 textureColor = texture2D(uTextureMap, uv).rgb;
-        
-        // Create tiling effect with adjustable scale
-        vec2 tiledUv = mod(uv * uTilingScale, 2.0) - 1.0;
-        float dist = length(tiledUv);
-        
-        // Create dot pattern with adjustable size
-        float brightness = cellNoise(uv * 60.0);
-        float dot = smoothstep(uDotSize, uDotSize - 0.01, dist) * brightness;
-        
-        // Create flow effect based on progress and depth (SCANNING EFFECT)
-        float flow = 1.0 - smoothstep(0.0, 0.02, abs(depth - uProgress));
-        
-        // Create mask with custom color
-        vec3 mask = dot * flow * uDotColor * 10.0;
-        
-        // Blend texture with effects
-        vec3 finalColor = textureColor + mask;
-        
-        // BLOOM EFFECT with adjustable intensity
-        // Create bright pass (extract bright areas)
-        float brightness_threshold = 0.6;
-        vec3 brightPass = max(finalColor - brightness_threshold, 0.0);
-        
-        // Blur the bright pass for bloom
-        vec3 bloom = blur(uTextureMap, uv, vec2(1.0, 0.0), 2.0) * 0.5 +
-                     blur(uTextureMap, uv, vec2(0.0, 1.0), 2.0) * 0.5;
-        
-        // Add bloom to final color with adjustable intensity
-        finalColor += bloom * uBloomIntensity;
-        
-        // Add extra bloom for bright areas
-        finalColor += brightPass * 0.3;
-        
-        gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
-
-    const rgbColor = hexToRgb(dotColor);
-
-    return new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: {
-        uProgress: { value: 0.0 },
-        uPointer: { value: new THREE.Vector2(0.5, 0.5) },
-        uTime: { value: 0.0 },
-        uTextureMap: { value: rawMap },
-        uDepthMap: { value: depthMap },
-        uDotSize: { value: dotSize },
-        uDotColor: { value: new THREE.Vector3(rgbColor.r, rgbColor.g, rgbColor.b) },
-        uBloomIntensity: { value: bloomIntensity },
-        uTilingScale: { value: tilingScale },
-      },
-    });
-  }, [rawMap, depthMap, setIsLoading]); // Remove props from dependencies
-
-  const [w, h] = useAspect(WIDTH, HEIGHT);
-
-  // Animate the progress uniform
-  useGSAP(() => {
-    if (materialRef.current?.material instanceof THREE.ShaderMaterial) {
-      gsap.to(materialRef.current.material.uniforms.uProgress, {
-        value: 1,
-        repeat: -1,
-        duration: 3,
-        ease: 'power1.out',
-      });
-    }
-  }, []);
-
-  // Update time and pointer
-  useFrame(({ pointer, clock }) => {
-    if (materialRef.current?.material instanceof THREE.ShaderMaterial) {
-      materialRef.current.material.uniforms.uTime.value = clock.getElapsedTime();
-      materialRef.current.material.uniforms.uPointer.value = pointer;
-    }
-  });
-
-  // Update uniforms when props change (without recreating material)
-  useFrame(() => {
-    if (materialRef.current?.material instanceof THREE.ShaderMaterial) {
-      const material = materialRef.current.material as THREE.ShaderMaterial;
-      const rgbColor = hexToRgb(dotColor);
-      
-      material.uniforms.uDotSize.value = dotSize;
-      material.uniforms.uDotColor.value = new THREE.Vector3(rgbColor.r, rgbColor.g, rgbColor.b);
-      material.uniforms.uBloomIntensity.value = bloomIntensity;
-      material.uniforms.uTilingScale.value = tilingScale;
-    }
-  });
-
-  return (
-    <mesh scale={[w, h, 1]} material={material} ref={materialRef}>
-      <planeGeometry />
+                  void main() {
+              vec2 uv = vUv;
+              float depth = texture2D(uDepthMap, uv).r;
+              
+              // Use the exact working formula from reference-code.tsx
+              float flow = 1.0 - smoothstep(0.0, 0.02, abs(depth - uProgress));
+              
+              // For dots effect
+              if (uEffectType < 0.5) {
+                // Create tiled UV for dots
+                vec2 aspect = vec2(1600.0 / 900.0, 1.0);
+                vec2 tUv = vec2(uv.x * aspect.x, uv.y);
+                vec2 tiling = vec2(uTilingScale);
+                vec2 tiledUv = mod(tUv * tiling, 2.0) - 1.0;
+                
+                // Create noise for dot brightness
+                float noise = fract(sin(dot(tUv * tiling / 2.0, vec2(12.9898, 78.233))) * 43758.5453);
+                
+                // Create dots
+                float dist = length(tiledUv);
+                float dot = smoothstep(0.5, 0.49, dist) * noise;
+                
+                // Combine dots with flow
+                float final = dot * flow;
+                gl_FragColor = vec4(uColor * final, final);
+              } else {
+                // For gradient line effect
+                float gradient = smoothstep(uProgress - uGradientWidth, uProgress, depth) * 
+                               smoothstep(uProgress + uGradientWidth, uProgress, depth);
+                gl_FragColor = vec4(uColor * gradient * uGradientIntensity, gradient);
+              }
+            }
+          `}
+          uniforms={uniformsRef.current}
+        />
     </mesh>
+    </>
   );
 };
 
 const Html = () => {
   const { isLoading } = useContext(GlobalContext);
-  const [dotSize, setDotSize] = useState(0.5);
-  const [dotColor, setDotColor] = useState('#ff0000');
-  const [bloomIntensity, setBloomIntensity] = useState(0.8);
-  const [tilingScale, setTilingScale] = useState(120);
+  const [dotSize, setDotSize] = useState(0.1);
+  const [dotColor, setDotColor] = useState('#00ff00');
+  const [tilingScale, setTilingScale] = useState(1.0);
   const [isVisible, setIsVisible] = useState(true);
+  const [effectType, setEffectType] = useState<'dots' | 'gradient'>('dots');
+  const [gradientWidth, setGradientWidth] = useState(0.0);
+  const [gradientIntensity, setGradientIntensity] = useState(0.4);
+  
+  // Framer Motion animation state
+  const [progress, setProgress] = useState(0);
+  const loopAnimation = useAnimation();
+  const loopProgressMotion = useMotionValue(0);
 
-  useGSAP(() => {
-    if (!isLoading) {
-      gsap
-        .timeline()
-        .to('[data-loader]', {
-          opacity: 0,
-        })
-        .from('[data-title]', {
-          yPercent: -100,
-          stagger: {
-            each: 0.15,
-          },
-          ease: 'power1.out',
-        })
-        .from('[data-desc]', {
-          opacity: 0,
-          yPercent: 100,
+  // Loop animation with Framer Motion
+  useEffect(() => {
+    const animateLoop = async () => {
+      try {
+        await loopAnimation.start({
+          x: [0, 1],
+          transition: {
+            duration: 3,
+            ease: 'easeInOut',
+            repeat: Infinity,
+            repeatType: 'loop',
+          }
         });
-    }
+      } catch (error) {
+        console.error('Animation error:', error);
+      }
+    };
+
+    animateLoop();
+
+    return () => {
+      loopAnimation.stop();
+    };
+  }, [loopAnimation]);
+
+  // Update progress based on loop animation
+  useEffect(() => {
+    const unsubscribe = loopProgressMotion.on('change', (latest) => {
+      setProgress(latest);
+    });
+
+    return unsubscribe;
+  }, [loopProgressMotion]);
+
+  // Debug loading state
+  useEffect(() => {
+    console.log('Loading state changed:', isLoading);
   }, [isLoading]);
 
   return (
     <div>
-      <div
-        style={{
-          height: '100vh',
-          position: 'fixed',
-          zIndex: 90,
-          backgroundColor: '#92400e',
-          pointerEvents: 'none',
-          width: '100%',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
+      {/* Hidden motion div to track loop animation progress */}
+      <motion.div
+        style={{ display: 'none' }}
+        animate={loopAnimation}
+        onUpdate={(latest: any) => {
+          if (typeof latest.x === 'number') {
+            loopProgressMotion.set(latest.x);
+          }
         }}
-        data-loader
-      >
+      />
+      
+      {isLoading && (
         <div
           style={{
-            width: '1.5rem',
-            height: '1.5rem',
-            backgroundColor: 'white',
-            borderRadius: '50%',
-            animation: 'ping 1s cubic-bezier(0, 0, 0.2, 1) infinite',
+            height: '100vh',
+            position: 'fixed',
+            zIndex: 90,
+            backgroundColor: '#92400e',
+            pointerEvents: 'none',
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            opacity: isLoading ? 1 : 0,
+            transition: 'opacity 0.5s ease-out',
           }}
-        ></div>
-      </div>
+          data-loader
+        >
+          <div
+            style={{
+              width: '1.5rem',
+              height: '1.5rem',
+              backgroundColor: 'white',
+              borderRadius: '50%',
+              animation: 'ping 1s cubic-bezier(0, 0, 0.2, 1) infinite',
+            }}
+          ></div>
+        </div>
+      )}
       <div style={{ height: '100vh' }}>
         <div
           style={{
@@ -398,7 +557,6 @@ const Html = () => {
             style={{
               fontSize: '2.25rem',
               lineHeight: '2.5rem',
-              ...tomorrow.style,
             }}
           >
             <div
@@ -435,8 +593,11 @@ const Html = () => {
           <Scene 
             dotSize={dotSize}
             dotColor={dotColor}
-            bloomIntensity={bloomIntensity}
             tilingScale={tilingScale}
+            effectType={effectType}
+            gradientWidth={gradientWidth/10}
+            gradientIntensity={gradientIntensity}
+            progress={progress}
           />
         </WebGPUCanvas>
 
@@ -468,12 +629,16 @@ const Html = () => {
           setDotSize={setDotSize}
           dotColor={dotColor}
           setDotColor={setDotColor}
-          bloomIntensity={bloomIntensity}
-          setBloomIntensity={setBloomIntensity}
           tilingScale={tilingScale}
           setTilingScale={setTilingScale}
           isVisible={isVisible}
           setIsVisible={setIsVisible}
+          effectType={effectType}
+          setEffectType={setEffectType}
+          gradientWidth={gradientWidth}
+          setGradientWidth={setGradientWidth}
+          gradientIntensity={gradientIntensity}
+          setGradientIntensity={setGradientIntensity}
         />
       </div>
     </div>
