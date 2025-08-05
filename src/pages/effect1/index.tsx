@@ -82,30 +82,18 @@ const Scene = () => {
         // Sample the depth map
         float depth = texture2D(uDepthMap, uv).r;
         
-        // Create displacement based on depth and pointer
-        vec2 displacement = vec2(
-          sin(uTime + uv.y * 10.0) * 0.01 * depth,
-          cos(uTime + uv.x * 10.0) * 0.01 * depth
-        );
-        
-        // Add pointer-based displacement
-        float pointerDist = distance(uv, uPointer);
-        float pointerEffect = smoothstep(0.1, 0.0, pointerDist) * 0.02;
-        displacement += (uPointer - vec2(0.5)) * pointerEffect * depth;
-        
-        // Sample the texture with displacement
-        vec2 displacedUv = uv + displacement;
-        vec3 textureColor = texture2D(uTextureMap, displacedUv).rgb;
+        // Sample the texture (no displacement)
+        vec3 textureColor = texture2D(uTextureMap, uv).rgb;
         
         // Create tiling effect
-        vec2 tiledUv = mod(displacedUv * 120.0, 2.0) - 1.0;
+        vec2 tiledUv = mod(uv * 120.0, 2.0) - 1.0;
         float dist = length(tiledUv);
         
         // Create dot pattern
-        float brightness = cellNoise(displacedUv * 60.0);
+        float brightness = cellNoise(uv * 60.0);
         float dot = smoothstep(0.5, 0.49, dist) * brightness;
         
-        // Create flow effect based on progress and depth
+        // Create flow effect based on progress and depth (SCANNING EFFECT)
         float flow = 1.0 - smoothstep(0.0, 0.02, abs(depth - uProgress));
         
         // Create mask
@@ -113,9 +101,6 @@ const Scene = () => {
         
         // Blend texture with effects
         vec3 finalColor = textureColor + mask;
-        
-        // Add depth-based color variation
-        finalColor += depth * vec3(0.2, 0.1, 0.0);
         
         // BLOOM EFFECT
         // Create bright pass (extract bright areas)
