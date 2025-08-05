@@ -429,7 +429,7 @@ const Scene = ({
                 float final = dot * flow;
                 gl_FragColor = vec4(uColor * final, final);
               } else {
-                // For gradient line effect - high quality like reference-code-old.tsx
+                // For gradient line effect - high quality like reference-code-old.tsx with manual bloom
                 float exactProgress = abs(depth - uProgress);
                 
                 // Scale the gradient width to be less sensitive (like reference code)
@@ -448,8 +448,34 @@ const Scene = ({
                 // Set opacity: 1.0 for current band, interpolated for bands within range, 0.0 for others
                 float opacity = isCurrentBand ? 1.0 : (isWithinGradientRange ? interpolatedOpacity : 0.0);
                 
+                // Manual bloom effect - sample neighboring pixels
+                float bloomStrength = 0.3; // Adjust this for bloom intensity
+                float bloomRadius = 0.002; // Adjust this for bloom size
+                
+                // Sample 8 neighboring pixels for bloom
+                float bloom = 0.0;
+                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, 0.0)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, 0.0)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(0.0, bloomRadius)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(0.0, -bloomRadius)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, bloomRadius)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, bloomRadius)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, -bloomRadius)).r;
+                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, -bloomRadius)).r;
+                bloom /= 8.0; // Average the samples
+                
+                // Calculate bloom opacity
+                float bloomProgress = abs(bloom - uProgress);
+                float bloomOpacity = 0.0;
+                if (bloomProgress <= 0.002) { // Slightly wider than main line
+                    bloomOpacity = (1.0 - bloomProgress / 0.002) * bloomStrength;
+                }
+                
+                // Combine main line with bloom
+                float finalOpacity = max(opacity, bloomOpacity);
+                
                 // Apply color and intensity
-                gl_FragColor = vec4(uColor * opacity * uGradientIntensity, opacity);
+                gl_FragColor = vec4(uColor * finalOpacity * uGradientIntensity, finalOpacity);
               }
             }
           `}
