@@ -149,6 +149,14 @@ interface UIControlsProps {
   setGradientWidth: (value: number) => void;
   gradientIntensity: number;
   setGradientIntensity: (value: number) => void;
+  bloomStrength: number;
+  setBloomStrength: (value: number) => void;
+  bloomRadius: number;
+  setBloomRadius: (value: number) => void;
+  showTexture: boolean;
+  setShowTexture: (value: boolean) => void;
+  backgroundColor: string;
+  setBackgroundColor: (value: string) => void;
   // Loop and hover controls
   loopEnabled: boolean;
   setLoopEnabled: (value: boolean) => void;
@@ -179,6 +187,14 @@ const UIControls = ({
   setGradientWidth,
   gradientIntensity,
   setGradientIntensity,
+  bloomStrength,
+  setBloomStrength,
+  bloomRadius,
+  setBloomRadius,
+  showTexture,
+  setShowTexture,
+  backgroundColor,
+  setBackgroundColor,
   loopEnabled,
   setLoopEnabled,
   loopType,
@@ -290,7 +306,57 @@ const UIControls = ({
               style={{ width: '100%' }}
             />
           </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Bloom Strength: {bloomStrength.toFixed(3)}</label>
+            <input
+              type="range"
+              min="0.0"
+              max="1.0"
+              step="0.01"
+              value={bloomStrength}
+              onChange={(e) => setBloomStrength(parseFloat(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px' }}>Bloom Radius: {bloomRadius.toFixed(4)}</label>
+            <input
+              type="range"
+              min="0.0001"
+              max="0.01"
+              step="0.0001"
+              value={bloomRadius}
+              onChange={(e) => setBloomRadius(parseFloat(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
         </>
+      )}
+
+      <div style={{ marginBottom: '15px' }}>
+        <label style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+          <input
+            type="checkbox"
+            checked={showTexture}
+            onChange={(e) => setShowTexture(e.target.checked)}
+            style={{ marginRight: '8px' }}
+          />
+          Show Texture Image
+        </label>
+      </div>
+
+      {!showTexture && (
+        <div style={{ marginBottom: '15px' }}>
+          <label style={{ display: 'block', marginBottom: '5px' }}>Background Color:</label>
+          <input
+            type="color"
+            value={backgroundColor}
+            onChange={(e) => setBackgroundColor(e.target.value)}
+            style={{ width: '100%', height: '30px' }}
+          />
+        </div>
       )}
 
       <div style={{ marginBottom: '15px' }}>
@@ -443,6 +509,10 @@ interface SceneProps {
   effectType: 'dots' | 'gradient';
   gradientWidth: number;
   gradientIntensity: number;
+  bloomStrength: number;
+  bloomRadius: number;
+  showTexture: boolean;
+  backgroundColor: string;
   progress: number;
 }
 
@@ -453,6 +523,10 @@ const Scene = ({
   effectType,
   gradientWidth,
   gradientIntensity,
+  bloomStrength,
+  bloomRadius,
+  showTexture,
+  backgroundColor,
   progress
 }: SceneProps) => {
   const { setIsLoading } = useContext(GlobalContext);
@@ -467,7 +541,9 @@ const Scene = ({
     uDotSize: { value: dotSize },
     uTilingScale: { value: tilingScale },
     uGradientWidth: { value: gradientWidth },
-    uGradientIntensity: { value: gradientIntensity }
+    uGradientIntensity: { value: gradientIntensity },
+    uBloomStrength: { value: bloomStrength },
+    uBloomRadius: { value: bloomRadius }
   });
 
   // Load the textures
@@ -487,6 +563,14 @@ const Scene = ({
       b: parseInt(result[3], 16) / 255
     } : { r: 1, g: 0, b: 0 };
   };
+
+  // Create background material for when texture is hidden
+  const backgroundMaterial = useMemo(() => {
+    return new THREE.MeshBasicMaterial({
+      color: backgroundColor,
+      transparent: false,
+    });
+  }, [backgroundColor]);
 
   // Use MeshBasicMaterial for bright base image
   const material = useMemo(() => {
@@ -510,6 +594,8 @@ const Scene = ({
     uniformsRef.current.uTilingScale.value = tilingScale;
     uniformsRef.current.uGradientWidth.value = gradientWidth;
     uniformsRef.current.uGradientIntensity.value = gradientIntensity;
+    uniformsRef.current.uBloomStrength.value = bloomStrength;
+    uniformsRef.current.uBloomRadius.value = bloomRadius;
     
     // Update depth map when loaded
     if (depthMap && uniformsRef.current.uDepthMap.value !== depthMap) {
@@ -522,10 +608,16 @@ const Scene = ({
 
   return (
     <>
-      {/* Base image mesh - bright and untouched */}
-      <mesh scale={[w, h, 1]} material={material}>
-        <planeGeometry />
-      </mesh>
+      {/* Base layer - either texture image or background color */}
+      {showTexture ? (
+        <mesh scale={[w, h, 1]} material={material}>
+          <planeGeometry />
+        </mesh>
+      ) : (
+        <mesh scale={[w, h, 1]} material={backgroundMaterial}>
+          <planeGeometry />
+        </mesh>
+      )}
       
       {/* Effects overlay mesh */}
       <mesh scale={[w, h, 1]} position={[0, 0, 0.01]} ref={materialRef}>
@@ -549,6 +641,8 @@ const Scene = ({
       uniform float uTilingScale;
       uniform float uGradientWidth;
       uniform float uGradientIntensity;
+      uniform float uBloomStrength;
+      uniform float uBloomRadius;
       varying vec2 vUv;
       
                   // Noise functions removed for clean gradient lines
@@ -576,11 +670,16 @@ const Scene = ({
                 float final = dot * flow;
                 gl_FragColor = vec4(uColor * final, final);
                                            } else {
-                // For gradient line effect - high quality like reference-code-old.tsx with manual bloom
+                // For gradient line effect - high quality implementation from reference-code-old.tsx
                 float exactProgress = abs(depth - uProgress);
                 
                 // Scale the gradient width to be less sensitive (like reference code)
                 float scaledGradientWidth = uGradientWidth * 0.1;
+                
+                // Opacity pattern:
+                // - Current progress band (exactProgress = 0): opacity = 1.0
+                // - Bands within gradientWidth range: linear interpolation from 1.0 to 0.05
+                // - Bands outside gradientWidth range: opacity = 0.0
                 
                 // Check if we're at the current progress band (very precise)
                 bool isCurrentBand = exactProgress <= 0.001;
@@ -589,37 +688,42 @@ const Scene = ({
                 bool isWithinGradientRange = exactProgress <= scaledGradientWidth;
                 
                 // Calculate linear interpolation for bands within range
+                // exactProgress goes from 0 to scaledGradientWidth
+                // We want opacity to go from 1.0 to 0.05
                 float normalizedDistance = exactProgress / scaledGradientWidth;
                 float interpolatedOpacity = (1.0 - normalizedDistance) * 0.95 + 0.05;
                 
                 // Set opacity: 1.0 for current band, interpolated for bands within range, 0.0 for others
                 float opacity = isCurrentBand ? 1.0 : (isWithinGradientRange ? interpolatedOpacity : 0.0);
                 
-                // Manual bloom effect - sample neighboring pixels
-                float bloomStrength = 0.3; // Adjust this for bloom intensity
-                float bloomRadius = 0.002; // Adjust this for bloom size
+                // Intensity-based bloom effect - brighter areas create more bloom like reference code
+                float bloomStrength = uBloomStrength;
+                float bloomSize = uBloomRadius * 100.0; // Scale up for better control
                 
-                // Sample 8 neighboring pixels for bloom
+                // Create multiple layers of bloom at different sizes for realistic glow
                 float bloom = 0.0;
-                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, 0.0)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, 0.0)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(0.0, bloomRadius)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(0.0, -bloomRadius)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, bloomRadius)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, bloomRadius)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(bloomRadius, -bloomRadius)).r;
-                bloom += texture2D(uDepthMap, uv + vec2(-bloomRadius, -bloomRadius)).r;
-                bloom /= 8.0; // Average the samples
                 
-                // Calculate bloom opacity
-                float bloomProgress = abs(bloom - uProgress);
-                float bloomOpacity = 0.0;
-                if (bloomProgress <= 0.002) { // Slightly wider than main line
-                    bloomOpacity = (1.0 - bloomProgress / 0.002) * bloomStrength;
-                }
+                // Core bloom - closest to the line
+                float coreBloom = exactProgress <= (scaledGradientWidth + bloomSize * 0.5) ? 
+                    (1.0 - smoothstep(0.0, scaledGradientWidth + bloomSize * 0.5, exactProgress)) * bloomStrength : 0.0;
+                
+                // Medium bloom - extends further
+                float mediumBloom = exactProgress <= (scaledGradientWidth + bloomSize) ? 
+                    (1.0 - smoothstep(0.0, scaledGradientWidth + bloomSize, exactProgress)) * bloomStrength * 0.6 : 0.0;
+                
+                // Outer bloom - softest and widest
+                float outerBloom = exactProgress <= (scaledGradientWidth + bloomSize * 2.0) ? 
+                    (1.0 - smoothstep(0.0, scaledGradientWidth + bloomSize * 2.0, exactProgress)) * bloomStrength * 0.3 : 0.0;
+                
+                // Combine all bloom layers
+                bloom = max(max(coreBloom, mediumBloom), outerBloom);
+                
+                // Intensity-based boost - stronger intensity creates more bloom
+                float intensityBoost = uGradientIntensity * 0.5;
+                bloom *= (1.0 + intensityBoost);
                 
                 // Combine main line with bloom
-                float finalOpacity = max(opacity, bloomOpacity);
+                float finalOpacity = max(opacity, bloom);
                 
                 // Apply color and intensity
                 gl_FragColor = vec4(uColor * finalOpacity * uGradientIntensity, finalOpacity);
@@ -644,6 +748,10 @@ const Html = () => {
   const [effectType, setEffectType] = useState<'dots' | 'gradient'>('dots');
   const [gradientWidth, setGradientWidth] = useState(0.0);
   const [gradientIntensity, setGradientIntensity] = useState(0.4);
+  const [bloomStrength, setBloomStrength] = useState(0.15);
+  const [bloomRadius, setBloomRadius] = useState(0.001);
+  const [showTexture, setShowTexture] = useState(true);
+  const [backgroundColor, setBackgroundColor] = useState('#000000');
   
   // Loop and hover state
   const [loopEnabled, setLoopEnabled] = useState(false);
@@ -660,6 +768,7 @@ const Html = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionStartProgress, setTransitionStartProgress] = useState(0);
   const [transitionStartTime, setTransitionStartTime] = useState(0);
+  const [mirrorDirection, setMirrorDirection] = useState<'forward' | 'backward'>('forward');
   const containerRef = useRef<HTMLDivElement>(null);
   const loopAnimation = useAnimation();
   const loopProgressMotion = useMotionValue(0);
@@ -688,18 +797,56 @@ const Html = () => {
     loopAnimation.stop();
 
     const animateLoop = async () => {
-      const repeatCount = loopType === 'repeat' ? Infinity : 
-                         loopType === 'oneShot' ? 0 : Infinity;
-      
-      await loopAnimation.start({
-        x: [0, 1],
-        transition: {
-          duration: loopDuration,
-          ease: getEasing(loopEasing),
-          repeat: repeatCount,
-          repeatType: loopType === 'mirror' ? 'reverse' : 'loop',
-        }
-      });
+      if (loopType === 'oneShot') {
+        await loopAnimation.start({
+          x: [0, 1],
+          transition: {
+            duration: loopDuration,
+            ease: getEasing(loopEasing),
+          }
+        });
+      } else if (loopType === 'repeat') {
+        await loopAnimation.start({
+          x: [0, 1],
+          transition: {
+            duration: loopDuration,
+            ease: getEasing(loopEasing),
+            repeat: Infinity,
+            repeatType: 'loop',
+          }
+        });
+             } else if (loopType === 'mirror') {
+         // Custom mirror implementation with direction tracking
+         const runMirrorLoop = async () => {
+           setMirrorDirection('forward');
+           
+           while (loopEnabled) {
+             // Forward animation: 0 -> 1
+             setMirrorDirection('forward');
+             await loopAnimation.start({
+               x: [0, 1],
+               transition: {
+                 duration: loopDuration,
+                 ease: getEasing(loopEasing),
+               }
+             });
+             
+             if (!loopEnabled) break;
+             
+             // Backward animation: 1 -> 0
+             setMirrorDirection('backward');
+             await loopAnimation.start({
+               x: [1, 0],
+               transition: {
+                 duration: loopDuration,
+                 ease: getEasing(loopEasing),
+               }
+             });
+           }
+         };
+         
+         runMirrorLoop();
+      }
     };
 
     animateLoop();
@@ -853,16 +1000,58 @@ const Html = () => {
           }
         });
         
-        // Then start the natural loop cycle from 0
-        loopAnimation.start({
-          x: [0, 1],
-          transition: {
-            duration: loopDuration,
-            ease: getEasing(loopEasing),
-            repeat: Infinity,
-            repeatType: loopType === 'mirror' ? 'reverse' : 'loop',
-          }
-        });
+                // Then start the natural loop cycle from 0
+        if (loopType === 'repeat') {
+          loopAnimation.start({
+            x: [0, 1],
+            transition: {
+              duration: loopDuration,
+              ease: getEasing(loopEasing),
+              repeat: Infinity,
+              repeatType: 'loop',
+            }
+          });
+        } else if (loopType === 'mirror') {
+          // For mirror mode, determine direction based on current progress and continue appropriately
+          const runMirrorLoop = async () => {
+            // Since we just completed to 1, we should now go backward (1 -> 0)
+            setMirrorDirection('backward');
+            await loopAnimation.start({
+              x: [1, 0],
+              transition: {
+                duration: loopDuration,
+                ease: getEasing(loopEasing),
+              }
+            });
+            
+            // After reaching 0, continue with normal mirror loop
+            while (loopEnabled) {
+              // Forward animation: 0 -> 1
+              setMirrorDirection('forward');
+              await loopAnimation.start({
+                x: [0, 1],
+                transition: {
+                  duration: loopDuration,
+                  ease: getEasing(loopEasing),
+                }
+              });
+              
+              if (!loopEnabled) break;
+              
+              // Backward animation: 1 -> 0
+              setMirrorDirection('backward');
+              await loopAnimation.start({
+                x: [1, 0],
+                transition: {
+                  duration: loopDuration,
+                  ease: getEasing(loopEasing),
+                }
+              });
+            }
+          };
+          
+          runMirrorLoop();
+        }
       }
     }
   };
@@ -946,6 +1135,10 @@ const Html = () => {
             effectType={effectType}
             gradientWidth={gradientWidth/10}
             gradientIntensity={gradientIntensity}
+            bloomStrength={bloomStrength}
+            bloomRadius={bloomRadius}
+            showTexture={showTexture}
+            backgroundColor={backgroundColor}
             progress={progress}
           />
         </WebGPUCanvas>
@@ -972,6 +1165,7 @@ const Html = () => {
           <div style={{ marginBottom: '5px' }}>Is Hovering: {isHovering ? 'YES' : 'NO'}</div>
           <div style={{ marginBottom: '5px' }}>Is Transitioning: {isTransitioning ? 'YES' : 'NO'}</div>
           <div style={{ marginBottom: '5px' }}>Loop Type: {loopType}</div>
+          <div style={{ marginBottom: '5px' }}>Mirror Direction: {mirrorDirection}</div>
         </div>
 
         {/* Toggle button for controls */}
@@ -1012,6 +1206,14 @@ const Html = () => {
           setGradientWidth={setGradientWidth}
           gradientIntensity={gradientIntensity}
           setGradientIntensity={setGradientIntensity}
+          bloomStrength={bloomStrength}
+          setBloomStrength={setBloomStrength}
+          bloomRadius={bloomRadius}
+          setBloomRadius={setBloomRadius}
+          showTexture={showTexture}
+          setShowTexture={setShowTexture}
+          backgroundColor={backgroundColor}
+          setBackgroundColor={setBackgroundColor}
           loopEnabled={loopEnabled}
           setLoopEnabled={setLoopEnabled}
           loopType={loopType}
